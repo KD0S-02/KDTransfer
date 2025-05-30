@@ -5,7 +5,7 @@ import (
 	"net"
 	"os"
 
-	"github.com/KDOS-02/KDTransfer/internal/handlers" // Adjust the module path as necessary
+	"github.com/KD0S-02/KDTransfer/go-server/internal/connectionhandler"
 )
 
 func main() {
@@ -27,7 +27,7 @@ func main() {
 			continue
 		}
 
-		go handlers.HandleConnection(conn)
+		go connectionhandler.HandleConnection(conn)
 	}
 
 }
