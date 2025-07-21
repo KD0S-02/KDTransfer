@@ -5,7 +5,7 @@ import (
 	"net"
 	"os"
 
-	"github.com/KD0S-02/KDTransfer/go-server/internal/connectionhandler"
+	"github.com/KD0S-02/KDTransfer/internal/connectionhandler"
 )
 
 func main() {

@@ -1,6 +1,6 @@
 # KDTransfer
 
-This project implements a high-performance file transfer application using Go for networking and a C++ library for performance-critical tasks (chunking, compression, checksums).
+A simple p2p file transfer application using Go. 
 
 # Custom Protocol
 
