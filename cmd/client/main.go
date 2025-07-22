@@ -17,7 +17,8 @@ func closeWithError(msg string, conn net.Conn) {
 	os.Exit(1)
 }
 
-func validateResponse(err error, expectedOpCode byte, actualOpCode byte, conn net.Conn) {
+func validateResponse(err error, expectedOpCode byte,
+	actualOpCode byte, conn net.Conn) {
 
 	if err != nil {
 		closeWithError("Server error! closing connection.", conn)
@@ -27,6 +28,27 @@ func validateResponse(err error, expectedOpCode byte, actualOpCode byte, conn ne
 		closeWithError("Error! unexpected server response.", conn)
 	}
 
+}
+
+func processFile(filePath string) (fileSize uint64, chunks [][]byte, err error) {
+	data, err := os.ReadFile(filePath)
+
+	if err != nil {
+		return 0, nil, fmt.Errorf("failed to open file: %w", err)
+	}
+
+	for i := 0; i < len(data); i += protocol.CHUNK_SIZE {
+		end := i + protocol.CHUNK_SIZE
+		if end > len(data) {
+			end = len(data)
+		}
+		chunk := data[i:end]
+		chunks = append(chunks, chunk)
+	}
+
+	fileSize = uint64(len(data))
+
+	return fileSize, chunks, nil
 }
 
 func handleSendCommand(conn net.Conn) {
