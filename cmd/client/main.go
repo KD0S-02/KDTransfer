@@ -2,11 +2,16 @@ package main
 
 import (
 	"bufio"
+	"crypto/sha256"
+	"encoding/binary"
 	"flag"
 	"fmt"
 	"log"
 	"net"
 	"os"
+	"path/filepath"
+	"strings"
+	"time"
 
 	"github.com/KD0S-02/KDTransfer/internal/protocol"
 )
@@ -30,11 +35,18 @@ func validateResponse(err error, expectedOpCode byte,
 
 }
 
-func processFile(filePath string) (fileSize uint64, chunks [][]byte, err error) {
-	data, err := os.ReadFile(filePath)
+func generateTransferID(filename string, senderIP string) uint32 {
+	timeStamp := time.Now().UnixNano()
+	data := fmt.Sprintf("%s-%s-%d", filename, senderIP, timeStamp)
+	hash := sha256.Sum256([]byte(data))
+	return binary.BigEndian.Uint32(hash[:4])
+}
+
+func processFile(currFilePath string) (filename string, fileSize uint64, chunks [][]byte, err error) {
+	data, err := os.ReadFile(currFilePath)
 
 	if err != nil {
-		return 0, nil, fmt.Errorf("failed to open file: %w", err)
+		return "", 0, nil, fmt.Errorf("failed to open file: %w", err)
 	}
 
 	for i := 0; i < len(data); i += protocol.CHUNK_SIZE {
@@ -46,9 +58,10 @@ func processFile(filePath string) (fileSize uint64, chunks [][]byte, err error) 
 		chunks = append(chunks, chunk)
 	}
 
+	filename = filepath.Base(currFilePath)
 	fileSize = uint64(len(data))
 
-	return fileSize, chunks, nil
+	return filename, fileSize, chunks, nil
 }
 
 func handleSendCommand(conn net.Conn) {
@@ -69,16 +82,61 @@ func handleSendCommand(conn net.Conn) {
 
 	validateResponse(err, protocol.PEER_LOOKUP_ACK, opCode, conn)
 
-	peerConn, err := net.Dial("tcp", string(payload))
+	fmt.Println("Peer found:", string(payload))
 
-	log.Println(string(payload))
+	peerConn, err := net.Dial("tcp", string(payload))
 
 	if err != nil {
 		fmt.Println(err.Error())
 		closeWithError("Failed to make direct connection to peer.", conn)
 	}
 
-	peerConn.Write([]byte("sending file: " + *file))
+	defer peerConn.Close()
+
+	filename, fileSize, chunks, err := processFile(*file)
+
+	if err != nil {
+		closeWithError("Failed to process file: "+err.Error(), conn)
+	}
+
+	transferID := generateTransferID(filename, peerConn.LocalAddr().String())
+
+	payload = protocol.CreateFileTransferStartPayload(transferID, filename, fileSize, uint32(len(chunks)))
+
+	request = protocol.MakeMessage(protocol.FILE_TRANSFER_START, payload)
+
+	_, err = peerConn.Write(request)
+
+	if err != nil {
+		closeWithError("Failed to send file transfer start message: "+err.Error(), conn)
+	}
+
+	log.Printf("Sending file: %s (ID: %d, Size: %d bytes, Chunks: %d)",
+		filename, transferID, fileSize, len(chunks))
+
+	for i, chunk := range chunks {
+		payload = protocol.CreateFileTransferDataPayload(transferID, uint32(i), chunk)
+		request = protocol.MakeMessage(protocol.FILE_TRANSFER_DATA, payload)
+
+		_, err = peerConn.Write(request)
+		if err != nil {
+			closeWithError("Failed to send file chunk: "+err.Error(), conn)
+		}
+
+		log.Printf("Sent chunk %d for transfer ID %d", i, transferID)
+	}
+
+	payload = binary.BigEndian.AppendUint32(nil, transferID)
+	request = protocol.MakeMessage(protocol.FILE_TRANSFER_END, payload)
+
+	_, err = peerConn.Write(request)
+
+	if err != nil {
+		closeWithError("Failed to send file transfer end message: "+err.Error(), conn)
+	}
+
+	log.Printf("File transfer completed for ID: %d", transferID)
+	fmt.Println("File transfer completed successfully.")
 }
 
 func handleInput(conn net.Conn) {
@@ -90,18 +148,17 @@ func handleInput(conn net.Conn) {
 
 	case "recv":
 
-		listener, err := net.Listen("tcp", "localhost:0")
+		listener, err := net.Listen("tcp", ":0")
 
 		addr := listener.Addr().String()
-
-		fmt.Println("listening on " + addr)
+		port := addr[strings.LastIndex(addr, ":")+1:]
 
 		if err != nil {
 			log.Fatal("Error when listening for direct connections.")
 			os.Exit(1)
 		}
 
-		request := protocol.MakeMessage(protocol.SERVER_HELLO, []byte(addr))
+		request := protocol.MakeMessage(protocol.SERVER_HELLO, []byte(port))
 
 		conn.Write(request)
 
@@ -132,24 +189,66 @@ func handleDirectConnections(peerConn net.Conn) {
 
 	defer peerConn.Close()
 
-	for {
+	var (
+		file       *os.File
+		filename   string
+		transferID uint32
+		nChunks    uint32
+		chunkIndex uint32
+		chunkData  []byte
+		fileSize   uint64
+	)
 
-		message := make([]byte, 1024)
-		bytesReceived, err := peerConn.Read(message)
+	close := false
+
+	for !close {
+
+		opCode, payload, err := protocol.ReadMessage(peerConn)
 
 		if err != nil {
 			log.Println("error when reading from direct connection: " + peerConn.RemoteAddr().String())
 			return
 		}
 
-		if bytesReceived == 0 {
-			continue
-		}
+		switch opCode {
 
-		log.Println(string(message))
+		case protocol.FILE_TRANSFER_START:
+			transferID, filename, fileSize, nChunks = protocol.ParseFileTransferPayload(payload)
+			log.Printf("Receiving file: %s (ID: %d, Size: %d bytes, Chunks: %d)",
+				filename, transferID, fileSize, nChunks)
+			file, err = os.Create(filename)
+
+			if err != nil {
+				log.Println("Error creating file:", err)
+				return
+			}
+
+		case protocol.FILE_TRANSFER_DATA:
+			transferID, chunkIndex, chunkData = protocol.ParseFileTransferDataPayload(payload)
+			log.Printf("Received chunk %d for transfer ID %d", chunkIndex, transferID)
+
+			if file == nil {
+				log.Println("file not open for writing:", err)
+				return
+			}
+
+			n, err := file.Write(chunkData)
+			if err != nil {
+				log.Println("Error writing chunks to file:", err)
+				return
+			}
+			log.Printf("Wrote %d bytes to file: %s", n, filename)
+
+		case protocol.FILE_TRANSFER_END:
+			log.Printf("File transfer completed for ID: %d", transferID)
+			log.Println("File saved as:", filename)
+			close = true
+		}
 
 	}
 
+	file.Close()
+	log.Println("Closing direct connection with peer:", peerConn.RemoteAddr().String())
 }
 
 func listenForDirectConnections(listener net.Listener) {

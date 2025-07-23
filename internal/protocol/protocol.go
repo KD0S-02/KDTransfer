@@ -2,6 +2,7 @@ package protocol
 
 import (
 	"encoding/binary"
+	"io"
 	"net"
 )
 
@@ -30,14 +31,12 @@ func ReadMessage(conn net.Conn) (opCode byte, payload []byte, err error) {
 	}
 
 	command := header[0]
-	payloadLength := getPayloadLength(header)
+	payloadLength := binary.BigEndian.Uint64(header[1:5])
 
-	if payloadLength > 0 {
-		payload = make([]byte, payloadLength)
-		_, err = conn.Read(payload)
-		if err != nil {
-			return 0, nil, err
-		}
+	payload = make([]byte, payloadLength)
+	_, err = io.ReadFull(conn, payload)
+	if err != nil {
+		return 0, nil, err
 	}
 
 	return command, payload, nil
@@ -50,23 +49,13 @@ func MakeMessage(opCode byte, payload []byte) []byte {
 
 	response := make([]byte, 5+payloadLength)
 	response[0] = opCode
-	response[1] = byte((payloadLength >> 24) & 0xFF)
-	response[2] = byte((payloadLength >> 16) & 0xFF)
-	response[3] = byte((payloadLength >> 8) & 0xFF)
-	response[4] = byte(payloadLength & 0xFF)
-
+	binary.BigEndian.PutUint32(response[1:5], uint32(payloadLength))
 	copy(response[5:], payload)
 
 	return response
 }
 
-// Calculates the length of the payload from the header bytes.
-func getPayloadLength(payload []byte) int {
-	return int(payload[1])<<24 | int(payload[2])<<16 |
-		int(payload[3])<<8 | int(payload[4])
-}
-
-func parseFileTransferPayload(payload []byte) (transferID uint32,
+func ParseFileTransferPayload(payload []byte) (transferID uint32,
 	fileName string, fileSize uint64, nChunks uint32) {
 
 	// File transfer payload format:
@@ -105,7 +94,7 @@ func parseFileTransferPayload(payload []byte) (transferID uint32,
 	return transferID, fileName, fileSize, nChunks
 }
 
-func parseFileTransferDataPayload(payload []byte) (transferID uint32,
+func ParseFileTransferDataPayload(payload []byte) (transferID uint32,
 	chunkIndex uint32, chunkData []byte) {
 
 	// File transfer data payload format:
@@ -121,18 +110,12 @@ func parseFileTransferDataPayload(payload []byte) (transferID uint32,
 	transferID = binary.BigEndian.Uint32(payload[:4])
 	chunkIndex = binary.BigEndian.Uint32(payload[4:8])
 
-	// check if the payload is long enough to contain the chunk data
-	if len(payload) < 8+256*1024 {
-		return transferID, chunkIndex, nil
-	}
-
-	chunkData = make([]byte, CHUNK_SIZE)
-	copy(chunkData, payload[8:])
+	chunkData = payload[8:]
 
 	return transferID, chunkIndex, chunkData
 }
 
-func createFileTransferStartPayload(transferID uint32,
+func CreateFileTransferStartPayload(transferID uint32,
 	fileName string, fileSize uint64, nChunks uint32) []byte {
 	fileNameBytes := []byte(fileName)
 	fileNameLength := len(fileNameBytes)
@@ -148,7 +131,7 @@ func createFileTransferStartPayload(transferID uint32,
 	return payload
 }
 
-func createFileTransferDataPayload(transferID uint32, chunkIndex uint32,
+func CreateFileTransferDataPayload(transferID uint32, chunkIndex uint32,
 	chunkData []byte) []byte {
 
 	payload := make([]byte, 8+len(chunkData))

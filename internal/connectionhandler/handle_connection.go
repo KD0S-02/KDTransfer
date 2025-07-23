@@ -43,14 +43,15 @@ func generateID() string {
 
 func handleRegister(conn net.Conn, payload []byte) usermap.Peer {
 	id := generateID()
-	ip, port, err := net.SplitHostPort(string(payload))
+
+	port := string(payload)
+
+	ip, _, err := net.SplitHostPort(conn.RemoteAddr().String())
 
 	if err != nil {
-		log.Println("Error parsing remote address:", err)
-		response := protocol.MakeMessage(protocol.ERROR, []byte("Invalid remote address"))
-		conn.Write(response)
-		user := usermap.Peer{}
-		return user
+		log.Println("Error getting remote address:", err)
+		conn.Close()
+		return usermap.Peer{}
 	}
 
 	user := usermap.Peer{
