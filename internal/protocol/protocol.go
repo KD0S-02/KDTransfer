@@ -31,9 +31,10 @@ func ReadMessage(conn net.Conn) (opCode byte, payload []byte, err error) {
 	}
 
 	command := header[0]
-	payloadLength := binary.BigEndian.Uint64(header[1:5])
+	payloadLength := int(binary.BigEndian.Uint32(header[1:5]))
 
 	payload = make([]byte, payloadLength)
+
 	_, err = io.ReadFull(conn, payload)
 	if err != nil {
 		return 0, nil, err
