@@ -20,6 +20,11 @@ const (
 	FILE_TRANSFER_END   byte = 0x0A
 )
 
+type Addressinfo struct {
+	LocalAddr  []string
+	PublicAddr []string
+}
+
 const CHUNK_SIZE = 256 * 1024 // 256KB
 
 func ReadMessage(conn net.Conn) (opCode byte, payload []byte, err error) {

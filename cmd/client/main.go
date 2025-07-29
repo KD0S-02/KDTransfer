@@ -1,107 +1,45 @@
 package main
 
 import (
-	"bufio"
 	"fmt"
 	"log"
 	"net"
 	"os"
-	"strings"
 
-	"github.com/KD0S-02/KDTransfer/internal/protocol"
+	"github.com/KD0S-02/KDTransfer/internal/config"
 )
-
-func handleInput(conn net.Conn) {
-
-	switch os.Args[1] {
-
-	case "send":
-		HandleSendCommand(conn)
-
-	case "recv":
-
-		listener, err := net.Listen("tcp", ":0")
-
-		addr := listener.Addr().String()
-		port := addr[strings.LastIndex(addr, ":")+1:]
-
-		if err != nil {
-			log.Fatal("Error when listening for direct connections.")
-			os.Exit(1)
-		}
-
-		request := protocol.MakeMessage(protocol.SERVER_HELLO, []byte(port))
-
-		conn.Write(request)
-
-		defer listener.Close()
-
-		opCode, payload, err := protocol.ReadMessage(conn)
-
-		ValidateResponse(err, protocol.SERVER_ACK, opCode, conn)
-
-		log.Println("Current ID: " + string(payload))
-
-		go listenForDirectConnections(listener)
-
-		r := bufio.NewScanner(os.Stdin)
-
-		for r.Scan() {
-			line := r.Text()
-			if line == "disconnect" {
-				os.Exit(1)
-			} else {
-				continue
-			}
-		}
-	}
-}
-
-func handleDirectConnections(peerConn net.Conn) {
-
-	defer peerConn.Close()
-
-	close := false
-
-	for !close {
-		close = HandleMessages(peerConn)
-	}
-
-	log.Println("Closing direct connection with peer:", peerConn.RemoteAddr().String())
-}
-
-func listenForDirectConnections(listener net.Listener) {
-
-	for {
-
-		peerConn, err := listener.Accept()
-
-		if err != nil {
-			log.Println("Error accepting connection:", err)
-			return
-		}
-
-		go handleDirectConnections(peerConn)
-	}
-
-}
 
 func main() {
 
 	if len(os.Args) < 2 {
-		fmt.Println("Missing Command: 'send' or 'recv'")
-		return
-	}
-
-	conn, err := net.Dial("tcp", ":8080")
-
-	if err != nil {
-		fmt.Println("Error Connecting to Communication Server:", err)
+		fmt.Println("Usage: program [send|recv]")
 		os.Exit(1)
 	}
 
+	if err := run(); err != nil {
+		log.Fatal(err)
+	}
+
+}
+
+func run() error {
+	config := config.LoadConfig()
+	conn, err := net.Dial("tcp", config.SignalingServerAddress)
+	if err != nil {
+		return fmt.Errorf("failed to connect to signaling server: %w", err)
+	}
 	defer conn.Close()
 
-	handleInput(conn)
+	return handleCommand(conn)
+}
 
+func handleCommand(conn net.Conn) error {
+	switch os.Args[1] {
+	case "send":
+		return HandleSendCommand(conn)
+	case "recv":
+		return HandleReceiveCommand(conn)
+	default:
+		return fmt.Errorf("unknown command: %s", os.Args[1])
+	}
 }

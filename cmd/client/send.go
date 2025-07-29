@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/sha256"
 	"encoding/binary"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
@@ -14,7 +15,9 @@ import (
 	"github.com/KD0S-02/KDTransfer/internal/protocol"
 )
 
-func processFile(currFilePath string) (filename string, fileSize uint64, chunks [][]byte, err error) {
+func processFile(currFilePath string) (filename string, fileSize uint64,
+	chunks [][]byte, err error) {
+
 	data, err := os.ReadFile(currFilePath)
 
 	if err != nil {
@@ -43,7 +46,7 @@ func generateTransferID(filename string, senderIP string) uint32 {
 	return binary.BigEndian.Uint32(hash[:4])
 }
 
-func HandleSendCommand(conn net.Conn) {
+func HandleSendCommand(conn net.Conn) error {
 	sendCmd := flag.NewFlagSet("send", flag.ExitOnError)
 	file := sendCmd.String("file", "", "Path of file to be transferred.")
 	peer := sendCmd.String("peer", "", "ID of receiving peer.")
@@ -51,7 +54,7 @@ func HandleSendCommand(conn net.Conn) {
 	sendCmd.Parse(os.Args[2:])
 
 	if *file == "" || *peer == "" {
-		closeWithError("Usage: send --file <filepath> --peer <peerID>", conn)
+		return fmt.Errorf("usage: send --file <filepath> --peer <peerID>")
 	}
 
 	request := protocol.MakeMessage(protocol.PEER_INFO_LOOKUP, []byte(*peer))
@@ -63,11 +66,38 @@ func HandleSendCommand(conn net.Conn) {
 
 	fmt.Println("Peer found:", string(payload))
 
-	peerConn, err := net.Dial("tcp", string(payload))
+	var addrinfo protocol.Addressinfo
+
+	err = json.Unmarshal(payload, &addrinfo)
 
 	if err != nil {
-		fmt.Println(err.Error())
-		closeWithError("Failed to make direct connection to peer.", conn)
+		return fmt.Errorf("failed to decode peer address: %s", err.Error())
+	}
+
+	var peerConn net.Conn
+
+	localAddrs := addrinfo.LocalAddr
+
+	connChan := make(chan net.Conn, 1)
+
+	for _, addr := range localAddrs {
+		go func(address string) {
+			conn, err := net.DialTimeout("tcp", address, 3*time.Second)
+			if err != nil {
+				return
+			}
+			select {
+			case connChan <- conn:
+			default:
+				conn.Close()
+			}
+		}(addr)
+	}
+
+	select {
+	case peerConn = <-connChan:
+	case <-time.After(5 * time.Second):
+		return fmt.Errorf("failed to connect to peer")
 	}
 
 	defer peerConn.Close()
@@ -75,19 +105,20 @@ func HandleSendCommand(conn net.Conn) {
 	filename, fileSize, chunks, err := processFile(*file)
 
 	if err != nil {
-		closeWithError("Failed to process file: "+err.Error(), conn)
+		return fmt.Errorf("failed to process file: %s", err.Error())
 	}
 
 	transferID := generateTransferID(filename, peerConn.LocalAddr().String())
 
-	payload = protocol.CreateFileTransferStartPayload(transferID, filename, fileSize, uint32(len(chunks)))
+	payload = protocol.CreateFileTransferStartPayload(transferID,
+		filename, fileSize, uint32(len(chunks)))
 
 	request = protocol.MakeMessage(protocol.FILE_TRANSFER_START, payload)
 
 	_, err = peerConn.Write(request)
 
 	if err != nil {
-		closeWithError("Failed to send file transfer start message: "+err.Error(), conn)
+		return fmt.Errorf("failed to send file transfer start message: %s", err.Error())
 	}
 
 	log.Printf("Sending file: %s (ID: %d, Size: %d bytes, Chunks: %d)",
@@ -99,7 +130,7 @@ func HandleSendCommand(conn net.Conn) {
 
 		_, err = peerConn.Write(request)
 		if err != nil {
-			closeWithError("Failed to send file chunk: "+err.Error(), conn)
+			return fmt.Errorf("failed to send file chunk: %s", err.Error())
 		}
 
 		log.Printf("Sent chunk %d for transfer ID %d", i, transferID)
@@ -111,9 +142,10 @@ func HandleSendCommand(conn net.Conn) {
 	_, err = peerConn.Write(request)
 
 	if err != nil {
-		closeWithError("Failed to send file transfer end message: "+err.Error(), conn)
+		return fmt.Errorf("failed to send file transfer end message: %s", err.Error())
 	}
 
 	log.Printf("File transfer completed for ID: %d", transferID)
-	fmt.Println("File transfer completed successfully.")
+
+	return err
 }
