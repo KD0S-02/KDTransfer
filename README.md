@@ -34,7 +34,7 @@ go build -o kdtransfer-client ./cmd/client
 ```
 
 
-update the .env to set custom port and change the signalling server address.
+update the .env to set custom tcp ports and change the signalling server address.
 
 ---
 
