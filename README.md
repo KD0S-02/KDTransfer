@@ -1,6 +1,6 @@
 # KDTransfer
 
-A simple p2p file transfer application using Go to get a better understand low level network protocols.
+A simple p2p file transfer application using Go to get a better understanding of low level network protocols.
 
 ## Overview
 
