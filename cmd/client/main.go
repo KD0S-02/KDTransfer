@@ -5,6 +5,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"time"
 
 	"github.com/KD0S-02/KDTransfer/internal/config"
 )
@@ -24,10 +25,14 @@ func main() {
 
 func run() error {
 	config := config.LoadConfig()
-	conn, err := net.Dial("tcp", config.SignalingServerAddress)
+
+	conn, err := net.DialTimeout("tcp", config.SignalingServerAddress,
+		time.Second*20)
+
 	if err != nil {
 		return fmt.Errorf("failed to connect to signaling server: %w", err)
 	}
+
 	defer conn.Close()
 
 	return handleCommand(conn)

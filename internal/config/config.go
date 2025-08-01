@@ -1,7 +1,10 @@
 package config
 
 import (
+	"fmt"
 	"os"
+
+	"github.com/joho/godotenv"
 )
 
 type Config struct {
@@ -12,26 +15,15 @@ type Config struct {
 
 func LoadConfig() *Config {
 
+	if err := godotenv.Load(); err != nil {
+		fmt.Println("No .env file found, using defaults")
+	}
+
 	config := &Config{
-		SignalingServerAddress: "localhost:8080",
-		TCPPort:                "2502",
-		UDPPort:                "2503",
-	}
-
-	if addr := os.Getenv("SIGNALING_SERVER_ADDRESS"); addr != "" {
-		config.SignalingServerAddress = addr
-	} else {
-		host := getEnvOrDefault("SIGNALING_SERVER_HOST", "localhost")
-		port := getEnvOrDefault("SIGNALING_SERVER_PORT", "8080")
-		config.SignalingServerAddress = host + ":" + port
-	}
-
-	if port := os.Getenv("TCP_PORT"); port != "" {
-		config.TCPPort = port
-	}
-
-	if port := os.Getenv("UDP_PORT"); port != "" {
-		config.UDPPort = port
+		SignalingServerAddress: getEnvOrDefault("SIGNALING_SERVER_ADDRESS",
+			"localhost:8080"),
+		TCPPort: getEnvOrDefault("TCP_PORT", "2502"),
+		UDPPort: getEnvOrDefault("UDP_PORT", "2503"),
 	}
 
 	return config

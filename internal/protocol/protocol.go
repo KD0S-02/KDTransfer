@@ -25,7 +25,8 @@ type Addressinfo struct {
 	PublicAddr []string
 }
 
-const CHUNK_SIZE = 256 * 1024 // 256KB
+const TCP_CHUNK_SIZE = 256 * 1024   // 256KB
+const WEBRTC_CHUNK_SIZE = 16 * 1024 // 16KB
 
 func ReadMessage(conn net.Conn) (opCode byte, payload []byte, err error) {
 

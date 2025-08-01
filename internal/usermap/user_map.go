@@ -16,7 +16,7 @@ type Peer struct {
 type PeerType string
 
 const (
-	PeerTypeCLI     PeerType = "cli"
+	PeerTypeNative  PeerType = "native"
 	PeerTypeBrowser PeerType = "browser"
 )
 

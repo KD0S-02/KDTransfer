@@ -7,15 +7,6 @@ import (
 	"os"
 )
 
-type FileTransfer struct {
-	file          *os.File
-	transferID    uint32
-	filename      string
-	filesize      uint64
-	nChunks       uint32
-	bytesReceived uint64
-}
-
 func closeWithError(msg string, conn net.Conn) {
 	log.Println(msg)
 	conn.Close()

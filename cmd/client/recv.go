@@ -8,22 +8,22 @@ import (
 	"log"
 	"net"
 	"os"
-	"sync"
+	"time"
 
 	"github.com/KD0S-02/KDTransfer/internal/config"
 	"github.com/KD0S-02/KDTransfer/internal/protocol"
 )
-
-var ftrMap sync.Map
 
 func HandleReceiveCommand(conn net.Conn) error {
 
 	config := config.LoadConfig()
 
 	listener, err := net.Listen("tcp", "0.0.0.0:"+config.TCPPort)
+
 	if err != nil {
 		return fmt.Errorf("failed to create listener: %w", err)
 	}
+
 	defer listener.Close()
 
 	localAddrs, err := GetAllLocalAddresses(config.TCPPort)
@@ -68,13 +68,11 @@ func HandleReceiveCommand(conn net.Conn) error {
 func waitForUserInput() error {
 	scanner := bufio.NewScanner(os.Stdin)
 	fmt.Println("Type 'disconnect' to exit")
-
 	for scanner.Scan() {
 		if scanner.Text() == "disconnect" {
 			return nil
 		}
 	}
-
 	return scanner.Err()
 }
 
@@ -84,16 +82,12 @@ func listenForDirectConnections(listener net.Listener) error {
 		if err != nil {
 			return fmt.Errorf("failed to accept connection: %w", err)
 		}
-
 		go handlePeerConnection(peerConn)
 	}
 }
 
 func handlePeerConnection(conn net.Conn) {
-
-	defer func() {
-		conn.Close()
-	}()
+	defer conn.Close()
 
 	for {
 		shouldClose, err := handleMessages(conn)
@@ -109,30 +103,6 @@ func handlePeerConnection(conn net.Conn) {
 	}
 }
 
-func AddFileTransfer(transferID uint32, filename string, filesize uint64,
-	nChunks uint32) {
-
-	ftr := &FileTransfer{
-		transferID:    transferID,
-		filename:      filename,
-		filesize:      filesize,
-		nChunks:       nChunks,
-		bytesReceived: 0,
-	}
-
-	ftrMap.Store(transferID, ftr)
-
-}
-
-func getFileTransfer(transferID uint32) (*FileTransfer, bool) {
-	value, ok := ftrMap.Load(transferID)
-	if !ok {
-		return nil, false
-	}
-	ftr, ok := value.(*FileTransfer)
-	return ftr, ok
-}
-
 func handleMessages(peerConn net.Conn) (close bool, err error) {
 
 	opCode, payload, err := protocol.ReadMessage(peerConn)
@@ -145,42 +115,42 @@ func handleMessages(peerConn net.Conn) (close bool, err error) {
 
 	case protocol.FILE_TRANSFER_START:
 		transferID, filename, filesize, nChunks := protocol.ParseFileTransferPayload(payload)
-		log.Printf("Receiving file: %s (ID: %d, Size: %d bytes, Chunks: %d)",
-			filename, transferID, filesize, nChunks)
 
-		ftr := &FileTransfer{
+		ft := &FileTransfer{
 			transferID: transferID,
 			filename:   filename,
 			filesize:   filesize,
-			nChunks:    nChunks,
+			startTime:  time.Now(),
 		}
+
+		log.Printf("Sending file: %s (ID: %d, Size: %d bytes, Chunks: %d)",
+			filename, transferID, filesize, nChunks)
+
 		file, err := os.Create(filename)
-		ftr.file = file
-		ftrMap.Store(transferID, ftr)
+		ft.file = file
+
+		Transfers.Store(transferID, ft)
 
 		if err != nil {
 			return true, err
 		}
 
 	case protocol.FILE_TRANSFER_DATA:
-		transferID, chunkIndex, chunkData := protocol.ParseFileTransferDataPayload(payload)
-		log.Printf("Received chunk %d for transfer ID %d", chunkIndex, transferID)
+		transferID, _, chunkData := protocol.ParseFileTransferDataPayload(payload)
 
-		ftr, ok := getFileTransfer(transferID)
+		ft, ok := GetTransfer(transferID)
 
 		if !ok {
 			log.Println("File transfer not found for ID:", transferID)
 			return true, err
 		}
 
-		file := ftr.file
+		file := ft.file
 
 		if file == nil {
 			log.Println("file not open for writing:", err)
 			return true, err
 		}
-
-		ftr.bytesReceived += uint64(len(chunkData))
 
 		_, err := file.Write(chunkData)
 		if err != nil {
@@ -189,16 +159,14 @@ func handleMessages(peerConn net.Conn) (close bool, err error) {
 
 	case protocol.FILE_TRANSFER_END:
 		transferID := binary.BigEndian.Uint32(payload)
-		ftr, ok := getFileTransfer(transferID)
+		ft, ok := GetTransfer(transferID)
 
 		if !ok {
-			log.Println("Invalid ID for Transfer End Payload:", transferID)
 			return true, err
 		}
 
-		ftr.file.Close()
-		log.Printf("File transfer completed for ID: %d", ftr.transferID)
-		log.Println("File saved as:", ftr.filename)
+		CompleteTransfer(ft.transferID, "received")
+
 		return true, err
 	}
 

@@ -59,6 +59,7 @@ func handleRegister(conn net.Conn, payload []byte) usermap.Peer {
 		ID:       id,
 		AddrInfo: addrInfo,
 		Outgoing: make(chan []byte, 32),
+		Type:     usermap.PeerTypeNative,
 	}
 
 	usermap.AddUser(id, user)
