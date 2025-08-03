@@ -19,7 +19,7 @@ const (
 	PEER_INFO_FORWARD   byte = 0x0A
 )
 
-const TCP_CHUNK_SIZE = 256 * 1024   // 256KB
+const TCP_CHUNK_SIZE = 512 * 1024   // 512KB
 const WEBRTC_CHUNK_SIZE = 16 * 1024 // 16KB
 
 type Message struct {
@@ -145,13 +145,15 @@ func CreateFileTransferStartPayload(transferID uint32,
 	return payload
 }
 
-func CreateFileTransferDataPayload(transferID uint32, chunkIndex uint32,
+func CreateFileTransferDataRequest(transferID uint32, chunkIndex uint32,
 	chunkData []byte) []byte {
 
-	payload := make([]byte, 8+len(chunkData))
-	binary.BigEndian.PutUint32(payload[:4], transferID)
-	binary.BigEndian.PutUint32(payload[4:8], chunkIndex)
-	copy(payload[8:], chunkData)
+	request := make([]byte, 5+8+len(chunkData))
+	request[0] = FILE_TRANSFER_DATA
+	binary.BigEndian.PutUint32(request[1:5], uint32(8+len(chunkData)))
+	binary.BigEndian.PutUint32(request[5:9], transferID)
+	binary.BigEndian.PutUint32(request[9:13], chunkIndex)
+	copy(request[13:], chunkData)
 
-	return payload
+	return request
 }

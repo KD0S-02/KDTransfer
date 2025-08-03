@@ -55,10 +55,8 @@ func (c *Client) sendFile(transferID uint32, filepath string,
 			return err
 		}
 		actualChunk := chunk[:n]
-		payload := protocol.CreateFileTransferDataPayload(transferID,
+		request := protocol.CreateFileTransferDataRequest(transferID,
 			i, actualChunk)
-		request := protocol.MakeMessage(protocol.FILE_TRANSFER_DATA,
-			payload)
 		_, err = peerConn.Write(request)
 		if err != nil {
 			return fmt.Errorf("failed to send file chunk: %s", err.Error())
