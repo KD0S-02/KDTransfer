@@ -2,32 +2,22 @@ package main
 
 import (
 	"fmt"
-	"net"
 	"os"
 
-	"github.com/KD0S-02/KDTransfer/internal/connectionhandler"
+	"github.com/KD0S-02/KDTransfer/internal/config"
+	"github.com/KD0S-02/KDTransfer/internal/signallingserver"
 )
 
 func main() {
-	listener, err := net.Listen("tcp", ":8080")
-
+	cfg := config.LoadConfig()
+	ss, err := signallingserver.NewSignallingServer(cfg)
 	if err != nil {
-		fmt.Println("Error starting server:", err)
+		fmt.Printf("Failed to create signalling server: %v\n", err)
 		os.Exit(1)
 	}
-
-	defer listener.Close()
-
-	fmt.Println("Server is listening on port 8080...")
-
-	for {
-		conn, err := listener.Accept()
-		if err != nil {
-			fmt.Println("Error accepting connection:", err)
-			continue
-		}
-
-		go connectionhandler.HandleConnection(conn)
+	err = ss.Start()
+	if err != nil {
+		fmt.Printf("Failed to start signalling server: %v\n", err)
+		os.Exit(1)
 	}
-
 }

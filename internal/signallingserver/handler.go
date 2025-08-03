@@ -1,4 +1,4 @@
-package connectionhandler
+package signallingserver
 
 import (
 	"encoding/json"
@@ -10,17 +10,16 @@ import (
 	"time"
 
 	"github.com/KD0S-02/KDTransfer/internal/protocol"
-	"github.com/KD0S-02/KDTransfer/internal/usermap"
 )
 
-func startWriter(conn net.Conn, peer usermap.Peer) {
+func (ss *SignallingServer) startWriter(conn net.Conn, peer Peer) {
 	go func() {
 		for msg := range peer.Outgoing {
 			_, err := conn.Write(msg)
 			if err != nil {
 				log.Println("Error writing to connection:", err)
 				conn.Close()
-				usermap.RemoveUser(peer.ID)
+				ss.RemoveUser(peer.ID)
 				break
 			}
 		}
@@ -28,7 +27,6 @@ func startWriter(conn net.Conn, peer usermap.Peer) {
 }
 
 func generateID() string {
-
 	letters := []rune("abcdefghijlmnopqrstuvwxyz1234567890")
 
 	randID := make([]rune, 8)
@@ -43,71 +41,72 @@ func generateID() string {
 	return string(randID)
 }
 
-func handleRegister(conn net.Conn, payload []byte) usermap.Peer {
+func (ss *SignallingServer) handleRegister(conn net.Conn, payload []byte) {
 	id := generateID()
 
-	var addrInfo protocol.Addressinfo
+	var peerInfo PeerInfo
 
-	err := json.Unmarshal(payload, &addrInfo)
+	err := json.Unmarshal(payload, &peerInfo)
 
 	if err != nil {
 		log.Printf("Failed parsing register payload from conn: %s",
 			conn.RemoteAddr().String())
 	}
 
-	user := usermap.Peer{
+	user := Peer{
 		ID:       id,
-		AddrInfo: addrInfo,
+		PeerInfo: peerInfo,
 		Outgoing: make(chan []byte, 32),
-		Type:     usermap.PeerTypeNative,
 	}
 
-	usermap.AddUser(id, user)
-	startWriter(conn, user)
+	ss.AddUser(id, user)
+	ss.startWriter(conn, user)
 
 	response := protocol.MakeMessage(protocol.SERVER_ACK, []byte(id))
 	user.Outgoing <- response
 
 	log.Printf("New connection established with ID: %s", id)
-
-	return user
 }
 
-func handlePeerLookup(conn net.Conn, payload []byte, user usermap.Peer) {
-	peerID := string(payload)
-	peer, found := usermap.GetUser(peerID)
+func (ss *SignallingServer) handlePeerLookup(conn net.Conn, payload []byte) {
+	var peerLookUp PeerLookUp
+	err := json.Unmarshal(payload, &peerLookUp)
+	if err != nil {
+		ss.sendErrorResponse(conn, "failed to decode lookup message")
+		return
+	}
+
+	peer, found := ss.GetUser(peerLookUp.PeerID)
 
 	if !found {
-		sendErrorResponse(conn, "User not found")
+		ss.sendErrorResponse(conn, "User not found")
 		return
 	}
 
 	// Send peer info to requesting user
-	if err := sendPeerInfo(conn, peer.AddrInfo); err != nil {
+	if err := ss.sendPeerInfo(conn, peer.PeerInfo); err != nil {
 		log.Printf("Error sending peer lookup response: %v", err)
 		return
 	}
 
 	// Forward requesting user's info to the found peer
-	if err := forwardUserInfo(peer, user.AddrInfo); err != nil {
-		log.Printf("Error forwarding user info to peer %s: %v", peerID, err)
+	if err := ss.forwardUserInfo(peer, peerLookUp.SenderInfo); err != nil {
+		log.Printf("Error forwarding user info to peer %s: %v", peerLookUp.PeerID, err)
 		return
 	}
-
-	log.Printf("Successfully completed peer lookup: %s found %s", user.ID, peerID)
 }
 
-func sendErrorResponse(conn net.Conn, message string) {
+func (ss *SignallingServer) sendErrorResponse(conn net.Conn, message string) {
 	response := protocol.MakeMessage(protocol.ERROR, []byte(message))
 	if _, err := conn.Write(response); err != nil {
 		log.Printf("Error sending error response: %v", err)
 	}
 }
 
-func sendPeerInfo(conn net.Conn, addrInfo interface{}) error {
+func (ss *SignallingServer) sendPeerInfo(conn net.Conn, addrInfo interface{}) error {
 	data, err := json.Marshal(addrInfo)
 	if err != nil {
-		sendErrorResponse(conn, "Error encoding address info")
+		ss.sendErrorResponse(conn, "Error encoding address info")
 		return fmt.Errorf("failed to marshal address info: %w", err)
 	}
 
@@ -119,8 +118,8 @@ func sendPeerInfo(conn net.Conn, addrInfo interface{}) error {
 	return nil
 }
 
-func forwardUserInfo(peer usermap.Peer, addrInfo interface{}) error {
-	data, err := json.Marshal(addrInfo)
+func (ss *SignallingServer) forwardUserInfo(peer Peer, userInfo PeerInfo) error {
+	data, err := json.Marshal(userInfo)
 	if err != nil {
 		return fmt.Errorf("failed to marshal user address info: %w", err)
 	}
@@ -137,10 +136,8 @@ func forwardUserInfo(peer usermap.Peer, addrInfo interface{}) error {
 	}
 }
 
-func HandleConnection(conn net.Conn) {
+func (ss *SignallingServer) HandleConnection(conn net.Conn) {
 	defer conn.Close()
-
-	var user usermap.Peer
 
 	for {
 
@@ -160,15 +157,13 @@ func HandleConnection(conn net.Conn) {
 		switch opCode {
 
 		case protocol.SERVER_HELLO:
-			user = handleRegister(conn, payload)
+			ss.handleRegister(conn, payload)
 
 		case protocol.PEER_INFO_LOOKUP:
-			handlePeerLookup(conn, payload, user)
+			ss.handlePeerLookup(conn, payload)
 
 		default:
 			log.Println("Unknown operation code:", opCode)
 		}
-
 	}
-
 }

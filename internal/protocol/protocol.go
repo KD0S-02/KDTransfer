@@ -6,27 +6,35 @@ import (
 	"net"
 )
 
-// Command byte values as constants
 const (
 	SERVER_HELLO        byte = 0x01
 	SERVER_ACK          byte = 0x02
 	PEER_INFO_LOOKUP    byte = 0x03
 	PEER_LOOKUP_ACK     byte = 0x04
-	PEER_INFO_FORWARD   byte = 0x05
-	BYE                 byte = 0x07
+	BYE                 byte = 0x05
 	ERROR               byte = 0x06
-	FILE_TRANSFER_START byte = 0x08
-	FILE_TRANSFER_DATA  byte = 0x09
-	FILE_TRANSFER_END   byte = 0x0A
+	FILE_TRANSFER_START byte = 0x07
+	FILE_TRANSFER_DATA  byte = 0x08
+	FILE_TRANSFER_END   byte = 0x09
+	PEER_INFO_FORWARD   byte = 0x0A
 )
-
-type Addressinfo struct {
-	LocalAddr  []string
-	PublicAddr []string
-}
 
 const TCP_CHUNK_SIZE = 256 * 1024   // 256KB
 const WEBRTC_CHUNK_SIZE = 16 * 1024 // 16KB
+
+type Message struct {
+	OpCode     byte
+	PayloadLen [4]byte
+	Payload    []byte
+}
+
+type TransferPayload struct {
+	TranferID   [4]byte
+	FilenameLen [2]byte
+	Filename    []byte
+	Filesize    [8]byte
+	NChunks     [4]byte
+}
 
 func ReadMessage(conn net.Conn) (opCode byte, payload []byte, err error) {
 
@@ -68,8 +76,7 @@ func ParseFileTransferPayload(payload []byte) (transferID uint32,
 	// File transfer payload format:
 	// [transferID (4 bytes)][fileNameLength (2 bytes)]
 	// [fileName (variable length)]
-	// [fileSize (8 bytes)]
-	// [nChunks (4 bytes)]
+	// [fileSize (8 bytes)][nChunks (4 bytes)]
 
 	// check if the payload is long enough to contain the transfer ID and
 	// file name length
@@ -105,11 +112,11 @@ func ParseFileTransferDataPayload(payload []byte) (transferID uint32,
 	chunkIndex uint32, chunkData []byte) {
 
 	// File transfer data payload format:
-	// [transferID (4 bytes)]
-	// [chunkIndex (4 bytes)]
+	// [transferID (4 bytes)][chunkIndex (4 bytes)]
 	// [chunkData (256KB if not the last chunk)]
 
-	// check if the payload is long enough to contain the transfer ID and chunk index
+	// check if the payload is long enough to contain the
+	//  transfer ID and chunk index
 	if len(payload) < 8 {
 		return 0, 0, nil
 	}
