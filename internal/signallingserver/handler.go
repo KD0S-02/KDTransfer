@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"math/rand"
 	"net"
 	"time"
 
+	"github.com/KD0S-02/KDTransfer/internal/crypto"
 	"github.com/KD0S-02/KDTransfer/internal/protocol"
 )
 
@@ -26,23 +26,8 @@ func (ss *SignallingServer) startWriter(conn net.Conn, peer Peer) {
 	}()
 }
 
-func generateID() string {
-	letters := []rune("abcdefghijlmnopqrstuvwxyz1234567890")
-
-	randID := make([]rune, 8)
-
-	source := rand.NewSource(time.Now().UnixNano())
-	random := rand.New(source)
-
-	for i := 0; i < 8; i++ {
-		randID[i] = letters[random.Intn(len(letters))]
-	}
-
-	return string(randID)
-}
-
 func (ss *SignallingServer) handleRegister(conn net.Conn, payload []byte) {
-	id := generateID()
+	id := crypto.GenerateID()
 
 	var peerInfo PeerInfo
 

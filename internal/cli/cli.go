@@ -44,12 +44,12 @@ func (c *CLI) Parse(args []string) error {
 }
 
 func (c *CLI) Run() error {
-	client, err := transfer.NewClient()
+	err := c.Parse(os.Args)
 	if err != nil {
 		return err
 	}
 
-	err = c.Parse(os.Args)
+	client, err := transfer.NewClient()
 	if err != nil {
 		return err
 	}
@@ -59,9 +59,9 @@ func (c *CLI) Run() error {
 		if c.File == "" || c.Peer == "" {
 			return fmt.Errorf("--file and --peer required")
 		}
-		return client.HandleSendCommand(c.Peer, c.File)
+		return client.HandleSendCommand(c.Peer, c.File, c.Passphrase)
 	case "recv":
-		return client.Receiver()
+		return client.Receiver(c.Passphrase)
 	default:
 		return fmt.Errorf("unknown command: %s", c.Command)
 	}

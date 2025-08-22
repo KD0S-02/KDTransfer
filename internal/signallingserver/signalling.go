@@ -1,6 +1,7 @@
 package signallingserver
 
 import (
+	"log"
 	"net"
 	"sync"
 
@@ -19,6 +20,7 @@ func NewSignallingServer(cfg *config.Config) (*SignallingServer, error) {
 	if err != nil {
 		return nil, err
 	}
+	log.Printf("Signalling Server started at addr %s", address)
 	return &SignallingServer{
 		TCPListener: listener,
 	}, nil

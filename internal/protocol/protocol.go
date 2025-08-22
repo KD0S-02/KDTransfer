@@ -19,7 +19,7 @@ const (
 	PEER_INFO_FORWARD   byte = 0x0A
 )
 
-const TCP_CHUNK_SIZE = 512 * 1024   // 512KB
+const TCP_CHUNK_SIZE = 512 * 1024   // 256KB
 const WEBRTC_CHUNK_SIZE = 16 * 1024 // 16KB
 
 type Message struct {
@@ -39,7 +39,7 @@ type TransferPayload struct {
 func ReadMessage(conn net.Conn) (opCode byte, payload []byte, err error) {
 
 	header := make([]byte, 5)
-	_, err = conn.Read(header)
+	_, err = io.ReadFull(conn, header)
 	if err != nil {
 		return ERROR, nil, err
 	}

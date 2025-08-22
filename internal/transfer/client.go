@@ -15,6 +15,7 @@ type Client struct {
 	SignalConn net.Conn
 	ConnType   network.ConnType
 	Transfers  sync.Map
+	Key        []byte
 }
 
 func NewClient() (*Client, error) {

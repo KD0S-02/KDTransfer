@@ -4,15 +4,36 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/pbkdf2"
-	"crypto/rand"
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"math/rand"
+	"time"
 )
 
+func GenerateID() string {
+	letters := []rune("abcdefghijlmnopqrstuvwxyz1234567890")
+
+	randID := make([]rune, 8)
+
+	source := rand.NewSource(time.Now().UnixNano())
+	random := rand.New(source)
+
+	for i := 0; i < 8; i++ {
+		randID[i] = letters[random.Intn(len(letters))]
+	}
+
+	return string(randID)
+}
+
+func GenerateRandSalt() string {
+	timestamp := time.Now().UTC().String()
+	code := GenerateID()
+	return code + timestamp
+}
+
 func GenerateKey(passphrase string,
-	code string) (key []byte, err error) {
-	saltData := fmt.Sprintf("kdtransfer|%s|v1", code)
+	saltData string) (key []byte, err error) {
 	saltArr := sha256.Sum256([]byte(saltData))
 	salt := saltArr[:]
 

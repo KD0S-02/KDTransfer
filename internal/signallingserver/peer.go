@@ -1,6 +1,7 @@
 package signallingserver
 
 type PeerInfo struct {
+	SaltData   string
 	Type       PeerType
 	LocalAddr  []string
 	PublicAddr []string
