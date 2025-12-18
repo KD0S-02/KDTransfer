@@ -156,8 +156,7 @@ func (c *Client) transferFile(filepath string, peerConn net.Conn) error {
 		return err
 	}
 
-	c.CompleteTransfer(transferID, "uploaded")
-	log.Printf("File transfer completed successfully")
+	c.CompleteTransfer(transferID, "sent")
 
 	return nil
 }

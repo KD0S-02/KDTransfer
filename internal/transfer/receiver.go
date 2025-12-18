@@ -79,7 +79,13 @@ func handleMessages(peerConn net.Conn, c *Client) (close bool, err error) {
 	}
 
 	switch opCode {
-
+	case protocol.PeerInfoForward:
+		payload, err := c.handleDecrpyption(buf[:n])
+		if err != nil {
+			return true, fmt.Errorf("error while decrypting peer info payload: %s",
+				err.Error())
+		}
+		print("Received peer info:\n%s\n", string(payload))
 	case protocol.FileTransferStart:
 		payload, err := c.handleDecrpyption(buf[:n])
 		if err != nil {

@@ -137,6 +137,7 @@ func (c *Client) AddTransfer(transferID uint32, ft *FileTransfer) {
 
 func (c *Client) sendTransferStart(conn net.Conn, transferID uint32, filename string,
 	fileSize uint64, numChunks uint32) error {
+
 	buf := make([]byte, protocol.TotalTCPSize)
 
 	n, err := protocol.CreateFileTransferStartPayload(transferID, filename, fileSize, numChunks, buf)
@@ -144,7 +145,8 @@ func (c *Client) sendTransferStart(conn net.Conn, transferID uint32, filename st
 		return fmt.Errorf("failed to create start payload: %w", err)
 	}
 
-	payload := buf[:n]
+	payload := make([]byte, n)
+	copy(payload, buf[:n])
 
 	if len(c.Key) != 0 {
 		payload, err = crypto.EncryptData(payload, c.Key)
@@ -153,12 +155,12 @@ func (c *Client) sendTransferStart(conn net.Conn, transferID uint32, filename st
 		}
 	}
 
-	n, err = protocol.MakeMessage(protocol.FileTransferStart, payload, buf)
+	msgSize, err := protocol.MakeMessage(protocol.FileTransferStart, payload, buf)
 	if err != nil {
 		return fmt.Errorf("failed to create start message: %w", err)
 	}
 
-	if _, err := conn.Write(buf[:n]); err != nil {
+	if _, err := conn.Write(buf[:msgSize]); err != nil {
 		return fmt.Errorf("failed to send start message: %w", err)
 	}
 
@@ -186,6 +188,5 @@ func (c *Client) sendTransferEnd(conn net.Conn, transferID uint32, buf []byte) e
 		return fmt.Errorf("failed to send end message: %w", err)
 	}
 
-	log.Printf("Sent transfer end for ID: %d", transferID)
 	return nil
 }
