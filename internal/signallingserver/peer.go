@@ -14,7 +14,7 @@ type PeerInfo struct {
 
 type Peer struct {
 	ID       string
-	PeerInfo PeerInfo
+	Info     PeerInfo
 	Outgoing chan []byte
 	once     sync.Once
 }
@@ -22,7 +22,7 @@ type Peer struct {
 func NewPeer(id string, info PeerInfo) *Peer {
 	return &Peer{
 		ID:       id,
-		PeerInfo: info,
+		Info:     info,
 		Outgoing: make(chan []byte, 64),
 	}
 }
@@ -43,8 +43,8 @@ func (p *Peer) SendMessage(msg []byte) error {
 }
 
 type PeerLookUp struct {
-	PeerID     string
-	SenderInfo PeerInfo
+	PeerID string
+	Info   PeerInfo
 }
 
 type PeerType string

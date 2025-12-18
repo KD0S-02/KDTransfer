@@ -54,7 +54,11 @@ func (c *CLI) Run() error {
 		return err
 	}
 
-	defer client.SignalConn.Close()
+	peerID, err := client.RegisterWithServer(c.Passphrase)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("Current ID: %s\n", peerID)
 
 	switch c.Command {
 	case "send":

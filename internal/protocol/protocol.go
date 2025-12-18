@@ -7,24 +7,40 @@ import (
 	"net"
 )
 
-// message op codes
+// Message operation codes for client-server and peer-to-peer communication
 const (
-	SERVER_HELLO        byte = 0x01
-	SERVER_ACK          byte = 0x02
-	PEER_INFO_LOOKUP    byte = 0x03
-	PEER_LOOKUP_ACK     byte = 0x04
-	BYE                 byte = 0x05
-	ERROR               byte = 0x06
-	FILE_TRANSFER_START byte = 0x07
-	FILE_TRANSFER_DATA  byte = 0x08
-	FILE_TRANSFER_END   byte = 0x09
-	PEER_INFO_FORWARD   byte = 0x0A
-	HEARTBEAT           byte = 0x0B
-	HEARTBEAT_ACK       byte = 0x0C
+	// Signaling server operations
+	ServerHello    byte = iota + 1 // Client registration
+	ServerAck                      // Registration acknowledgment
+	PeerInfoLookup                 // Request peer information
+	PeerLookupAck                  // Peer information response
+	Bye                            // Clean disconnect
+	Error                          // Error message
+
+	// File transfer operations
+	FileTransferStart // Initiate file transfer
+	FileTransferData  // File data chunk
+	FileTransferEnd   // Transfer completion
+
+	// Peer coordination
+	PeerInfoForward // Forward peer info to target
+	Heartbeat       // Keep-alive ping
+	HeartbeatAck    // Keep-alive response
 )
 
-const TOTAL_TCP_SIZE = 256 * 1024   // 256KB
-const TOTAL_WEBRTC_SIZE = 16 * 1024 // 16KB
+// Transport buffer sizes
+const (
+	// Maximum message sizes for different transports
+	TotalTCPSize    = 256 * 1024 // 256KB - optimal for TCP
+	TotalWebRTCSize = 16 * 1024  // 16KB - WebRTC SCTP limit
+
+	// Protocol overhead
+	TransferHeaderSize = 8 // 4 bytes transfer ID + 4 bytes chunk index
+
+	// Available payload space after headers
+	TCPChunkSize    = TotalTCPSize - TransferHeaderSize    // ~256KB
+	WebRTCChunkSize = TotalWebRTCSize - TransferHeaderSize // ~16KB
+)
 
 type Message struct {
 	OpCode     byte
@@ -33,18 +49,18 @@ type Message struct {
 }
 
 func PingMessage(buf []byte) (int, error) {
-	return MakeMessage(HEARTBEAT, nil, buf)
+	return MakeMessage(Heartbeat, nil, buf)
 }
 
 func PongMessage(buf []byte) (int, error) {
-	return MakeMessage(HEARTBEAT_ACK, nil, buf)
+	return MakeMessage(HeartbeatAck, nil, buf)
 }
 
 func ReadMessage(conn net.Conn, buf []byte) (opCode byte, n int, err error) {
 	header := make([]byte, 5)
 	_, err = io.ReadFull(conn, header)
 	if err != nil {
-		return ERROR, 0, err
+		return Error, 0, err
 	}
 
 	opCode = header[0]
@@ -175,7 +191,7 @@ func CreateFileTransferDataRequest(transferID uint32, chunkIndex uint32,
 		return 0, fmt.Errorf("buffer too small for file transfer data payload")
 	}
 
-	buf[0] = FILE_TRANSFER_DATA
+	buf[0] = FileTransferData
 	binary.BigEndian.PutUint32(buf[1:5], uint32(8+len(chunkData)))
 	binary.BigEndian.PutUint32(buf[5:9], transferID)
 	binary.BigEndian.PutUint32(buf[9:13], chunkIndex)

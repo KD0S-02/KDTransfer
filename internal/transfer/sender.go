@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"math"
 	"net"
@@ -37,202 +38,173 @@ func (c *Client) processFile(filepath string,
 	return filename, filesize, numChunks, nil
 }
 
-func (c *Client) sendFile(transferID uint32, filepath string,
-	chunkSize int, peerConn net.Conn) error {
-	file, err := os.Open(filepath)
+func (c *Client) HandleSendCommand(peer string, filepath string, passphrase string) error {
+	receiverInfo, err := c.lookupPeer(peer)
 	if err != nil {
-		return err
+		return fmt.Errorf("peer lookup failed: %w", err)
 	}
-	defer file.Close()
 
-	chunk := make([]byte, chunkSize)
-	i := uint32(0)
-	for {
-		n, err := file.Read(chunk)
-		if n == 0 {
-			break
+	log.Printf("Found peer %s", peer)
+
+	if len(passphrase) != 0 {
+		if err := c.decryptPeerAddresses(&receiverInfo, passphrase); err != nil {
+			return fmt.Errorf("failed to decrypt addresses: %w", err)
 		}
+	}
+
+	peerConn, connType, err := network.RaceConnections(receiverInfo.LocalAddr)
+	if err != nil {
+		return fmt.Errorf("failed to connect to peer: %w", err)
+	}
+	defer peerConn.Close()
+
+	c.ConnType = connType
+	log.Printf("Connected to peer via %s", connType)
+
+	return c.transferFile(filepath, peerConn)
+}
+func (c *Client) lookupPeer(peerID string) (signallingserver.PeerInfo, error) {
+	lookupRequest := signallingserver.PeerLookUp{PeerID: peerID}
+	payload, err := json.Marshal(lookupRequest)
+	if err != nil {
+		return signallingserver.PeerInfo{}, fmt.Errorf("failed to encode lookup: %w", err)
+	}
+
+	buf := make([]byte, 8192)
+	n, err := protocol.MakeMessage(protocol.PeerInfoLookup, payload, buf)
+	if err != nil {
+		return signallingserver.PeerInfo{}, fmt.Errorf("failed to create message: %w", err)
+	}
+
+	if _, err := c.SignalConn.Write(buf[:n]); err != nil {
+		return signallingserver.PeerInfo{}, fmt.Errorf("failed to send lookup: %w", err)
+	}
+
+	opCode, n, err := protocol.ReadMessage(c.SignalConn, buf)
+	if err != nil {
+		return signallingserver.PeerInfo{}, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	if opCode == protocol.Error {
+		return signallingserver.PeerInfo{}, fmt.Errorf("server error: %s", string(buf[:n]))
+	}
+
+	if opCode != protocol.PeerLookupAck {
+		return signallingserver.PeerInfo{}, fmt.Errorf("unexpected response: opcode %d", opCode)
+	}
+
+	var peerInfo signallingserver.PeerInfo
+	if err := json.Unmarshal(buf[:n], &peerInfo); err != nil {
+		return signallingserver.PeerInfo{}, fmt.Errorf("failed to decode peer info: %w", err)
+	}
+
+	return peerInfo, nil
+}
+
+func (c *Client) decryptPeerAddresses(peerInfo *signallingserver.PeerInfo, passphrase string) error {
+	key, err := crypto.GenerateKey(passphrase, peerInfo.SaltData)
+	if err != nil {
+		return fmt.Errorf("failed to generate key: %w", err)
+	}
+	c.Key = key
+
+	for i, addr := range peerInfo.LocalAddr {
+		encrypted, err := base64.StdEncoding.DecodeString(addr)
 		if err != nil {
-			return err
-		}
-		actualChunk := chunk[:n]
-
-		if len(c.Key) != 0 {
-			actualChunk, err = crypto.EncrpyptData(actualChunk, c.Key)
-			if err != nil {
-				return fmt.Errorf("error while encrypting chunks: %s",
-					err.Error())
-			}
+			return fmt.Errorf("failed to decode address %d: %w", i, err)
 		}
 
-		request := protocol.CreateFileTransferDataRequest(transferID,
-			i, actualChunk)
-		_, err = peerConn.Write(request)
+		decrypted, err := crypto.DecryptData(encrypted, c.Key)
 		if err != nil {
-			return fmt.Errorf("failed to send file chunk: %s", err.Error())
+			return fmt.Errorf("failed to decrypt address %d: %w", i, err)
 		}
-		i++
+
+		peerInfo.LocalAddr[i] = string(decrypted)
 	}
 	return nil
 }
 
-func (c *Client) HandleSendCommand(peer string, filepath string,
-	passphrase string) error {
-
-	localAddrs, err := network.LocalAddresses(c.Config.TCPPort)
-	if err != nil {
-		return err
-	}
-
-	var saltData string
-
-	if len(passphrase) != 0 {
-		saltData = crypto.GenerateRandSalt()
-		c.Key, err = crypto.GenerateKey(passphrase, saltData)
-		if err != nil {
-			return fmt.Errorf("error while generating key: %s", err.Error())
-		}
-
-		for i, addr := range localAddrs {
-			data, err := crypto.EncrpyptData([]byte(addr), c.Key)
-			if err != nil {
-				return fmt.Errorf("error while encrypting addrs: %s",
-					err.Error())
-			}
-			localAddrs[i] = string(data)
-		}
-	}
-
-	var senderInfo signallingserver.PeerLookUp
-	senderInfo.PeerID = peer
-	senderInfo.SenderInfo.SaltData = saltData
-	senderInfo.SenderInfo.LocalAddr = localAddrs
-
-	encodedSenderInfo, err := json.Marshal(senderInfo)
-	if err != nil {
-		return err
-	}
-
-	request := protocol.MakeMessage(protocol.PEER_INFO_LOOKUP,
-		encodedSenderInfo)
-	c.SignalConn.Write(request)
-
-	opCode, payload, err := protocol.ReadMessage(c.SignalConn)
-
-	if err != nil || opCode == protocol.ERROR {
-		return fmt.Errorf("%s", "unexpected response from server on connection")
-	}
-
-	var peerInfo signallingserver.PeerInfo
-
-	err = json.Unmarshal(payload, &peerInfo)
-	if err != nil {
-		return fmt.Errorf("failed to decode peer address:  %v", err)
-	}
-
-	fmt.Printf("Peer Info found for %s\n", peer)
-
-	if len(passphrase) != 0 {
-		saltData = peerInfo.SaltData
-		c.Key, err = crypto.GenerateKey(passphrase, saltData)
-		if err != nil {
-			return fmt.Errorf("error while generating key for encryption: %s",
-				err.Error())
-		}
-		for i, addr := range peerInfo.LocalAddr {
-			d, err := base64.StdEncoding.DecodeString(addr)
-			if err != nil {
-				return fmt.Errorf("error while decoding addr to bytes: %s",
-					err.Error())
-			}
-			data, err := crypto.DecryptData(d, c.Key)
-			if err != nil {
-				return fmt.Errorf("error while decrypting recv info: %s",
-					err.Error())
-			}
-			peerInfo.LocalAddr[i] = string(data)
-		}
-	}
-
-	peerConn, connType, err := network.RaceConnections(peerInfo.LocalAddr)
-
-	c.ConnType = connType
-
-	if err != nil {
-		return err
-	}
-
-	defer peerConn.Close()
-
-	var chunkSize int
-
-	switch c.ConnType {
-	case network.TCPConn:
-		chunkSize = protocol.TCP_CHUNK_SIZE
-	case network.WEBRTCConn:
-		chunkSize = protocol.WEBRTC_CHUNK_SIZE
+func (c *Client) transferFile(filepath string, peerConn net.Conn) error {
+	chunkSize := protocol.TCPChunkSize
+	if c.ConnType == network.WEBRTCConn {
+		chunkSize = protocol.WebRTCChunkSize
 	}
 
 	filename, fileSize, numChunks, err := c.processFile(filepath, chunkSize)
-
 	if err != nil {
-		return fmt.Errorf("failed to process file: %s", err.Error())
+		return fmt.Errorf("failed to process file: %w", err)
 	}
 
 	transferID := generateTransferID(filename, peerConn.LocalAddr().String())
 
-	payload = protocol.CreateFileTransferStartPayload(transferID,
-		filename, fileSize, numChunks)
-
-	if len(c.Key) != 0 {
-		payload, err = crypto.EncrpyptData(payload, c.Key)
-		if err != nil {
-			return fmt.Errorf("error while encrypting payload: %s",
-				err.Error())
-		}
-	}
-
-	request = protocol.MakeMessage(protocol.FILE_TRANSFER_START, payload)
-
-	_, err = peerConn.Write(request)
-
-	if err != nil {
-		return fmt.Errorf("failed to send file transfer start message: %s",
-			err.Error())
+	if err := c.sendTransferStart(peerConn, transferID, filename, fileSize, numChunks); err != nil {
+		return err
 	}
 
 	log.Printf("Sending file: %s (ID: %d, Size: %d bytes, Chunks: %d)",
 		filename, transferID, fileSize, numChunks)
 
 	ft := NewFileTransfer(filename, fileSize, transferID)
-
 	c.AddTransfer(transferID, ft)
 
-	err = c.sendFile(transferID, filepath, chunkSize, peerConn)
-
-	if err != nil {
-		return fmt.Errorf("%s", err.Error())
+	buf := make([]byte, protocol.TotalTCPSize)
+	if err := c.sendFile(transferID, filepath, chunkSize, peerConn, buf); err != nil {
+		return fmt.Errorf("file transfer failed: %w", err)
 	}
 
-	payload = binary.BigEndian.AppendUint32(nil, transferID)
-
-	if len(c.Key) != 0 {
-		payload, err = crypto.EncrpyptData(payload, c.Key)
-		if err != nil {
-			return fmt.Errorf("error while encrypting payload: %s",
-				err.Error())
-		}
-	}
-
-	request = protocol.MakeMessage(protocol.FILE_TRANSFER_END, payload)
-	_, err = peerConn.Write(request)
-
-	if err != nil {
-		return fmt.Errorf("failed to send file transfer end message: %s",
-			err.Error())
+	if err := c.sendTransferEnd(peerConn, transferID, buf); err != nil {
+		return err
 	}
 
 	c.CompleteTransfer(transferID, "uploaded")
+	log.Printf("File transfer completed successfully")
+
+	return nil
+}
+
+func (c *Client) sendFile(transferID uint32, filepath string, chunkSize int,
+	peerConn net.Conn, buf []byte) error {
+	file, err := os.Open(filepath)
+	if err != nil {
+		return fmt.Errorf("failed to open file: %w", err)
+	}
+	defer file.Close()
+
+	chunk := make([]byte, chunkSize)
+	chunkIndex := uint32(0)
+
+	for {
+		n, err := file.Read(chunk)
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			return fmt.Errorf("read error at chunk %d: %w", chunkIndex, err)
+		}
+		if n == 0 {
+			break
+		}
+
+		actualChunk := chunk[:n]
+
+		if len(c.Key) != 0 {
+			actualChunk, err = crypto.EncryptData(actualChunk, c.Key)
+			if err != nil {
+				return fmt.Errorf("failed to encrypt chunk %d: %w", chunkIndex, err)
+			}
+		}
+
+		msgSize, err := protocol.CreateFileTransferDataRequest(transferID, chunkIndex, actualChunk, buf)
+		if err != nil {
+			return fmt.Errorf("failed to create chunk %d message: %w", chunkIndex, err)
+		}
+
+		if _, err := peerConn.Write(buf[:msgSize]); err != nil {
+			return fmt.Errorf("failed to send chunk %d: %w", chunkIndex, err)
+		}
+
+		chunkIndex++
+	}
 
 	return nil
 }

@@ -67,7 +67,7 @@ func generateAEAD(key []byte) (aead cipher.AEAD, err error) {
 	return aead, nil
 }
 
-func EncrpyptData(plaintext []byte, key []byte) (
+func EncryptData(plaintext []byte, key []byte) (
 	data []byte, err error) {
 	aead, err := generateAEAD(key)
 	if err != nil {

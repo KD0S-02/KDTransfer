@@ -37,7 +37,7 @@ func (ss *SignallingServer) handleRegister(conn net.Conn, payload []byte) (*Peer
 	}()
 
 	// Send registration acknowledgment
-	if err := ss.SendToPeer(user, protocol.SERVER_ACK, []byte(id)); err != nil {
+	if err := ss.SendToPeer(user, protocol.ServerAck, []byte(id)); err != nil {
 		log.Printf("Failed sending SERVER_ACK to %s: %v", id, err)
 		ss.RemoveUser(id)
 		return nil, "", fmt.Errorf("failed sending register ack: %w", err)
@@ -50,7 +50,7 @@ func (ss *SignallingServer) handleRegister(conn net.Conn, payload []byte) (*Peer
 func (ss *SignallingServer) handlePeerLookup(user *Peer, payload []byte) error {
 	var peerLookUp PeerLookUp
 	if err := json.Unmarshal(payload, &peerLookUp); err != nil {
-		if sendErr := ss.SendToPeer(user, protocol.ERROR, []byte("invalid request")); sendErr != nil {
+		if sendErr := ss.SendToPeer(user, protocol.Error, []byte("invalid request")); sendErr != nil {
 			log.Printf("Failed sending error to user %s: %v", user.ID, sendErr)
 		}
 		return nil
@@ -58,34 +58,34 @@ func (ss *SignallingServer) handlePeerLookup(user *Peer, payload []byte) error {
 
 	peer, found := ss.GetUser(peerLookUp.PeerID)
 	if !found {
-		if sendErr := ss.SendToPeer(user, protocol.ERROR, []byte("peer not found")); sendErr != nil {
+		if sendErr := ss.SendToPeer(user, protocol.Error, []byte("peer not found")); sendErr != nil {
 			log.Printf("Failed sending error to user %s: %v", user.ID, sendErr)
 		}
 		return nil
 	}
 
 	// Marshal and send peer info to requesting user
-	data, err := json.Marshal(peer.PeerInfo)
+	data, err := json.Marshal(peer.Info)
 	if err != nil {
 		log.Printf("Failed to marshal peer info for %s: %v", peer.ID, err)
-		if sendErr := ss.SendToPeer(user, protocol.ERROR, []byte("server error")); sendErr != nil {
+		if sendErr := ss.SendToPeer(user, protocol.Error, []byte("server error")); sendErr != nil {
 			log.Printf("Failed sending error to user %s: %v", user.ID, sendErr)
 		}
 		return nil
 	}
 
-	if err := ss.SendToPeer(user, protocol.PEER_LOOKUP_ACK, data); err != nil {
+	if err := ss.SendToPeer(user, protocol.PeerLookupAck, data); err != nil {
 		return fmt.Errorf("failed sending lookup response to user %s: %w", user.ID, err)
 	}
 
 	// Marshal and forward sender info to target peer (best effort)
-	senderData, err := json.Marshal(peerLookUp.SenderInfo)
+	senderData, err := json.Marshal(peerLookUp.Info)
 	if err != nil {
 		log.Printf("Failed to marshal sender info: %v", err)
 		return nil
 	}
 
-	if err := ss.SendToPeer(peer, protocol.PEER_INFO_FORWARD, senderData); err != nil {
+	if err := ss.SendToPeer(peer, protocol.PeerInfoForward, senderData); err != nil {
 		log.Printf("Warning: failed forwarding sender info to peer %s: %v", peer.ID, err)
 	}
 
@@ -125,7 +125,7 @@ func (ss *SignallingServer) HandleConnection(conn net.Conn) error {
 		ss.PutBuffer(buf)
 
 		switch opCode {
-		case protocol.SERVER_HELLO:
+		case protocol.ServerHello:
 			if registered {
 				return fmt.Errorf("duplicate registration attempt")
 			}
@@ -138,7 +138,7 @@ func (ss *SignallingServer) HandleConnection(conn net.Conn) error {
 			registered = true
 			log.Printf("User %s registered successfully", userID)
 
-		case protocol.PEER_INFO_LOOKUP:
+		case protocol.PeerInfoLookup:
 			if !registered {
 				return fmt.Errorf("peer lookup before registration")
 			}

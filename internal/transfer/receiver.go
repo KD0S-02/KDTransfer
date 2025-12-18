@@ -2,9 +2,7 @@ package transfer
 
 import (
 	"bufio"
-	"encoding/base64"
 	"encoding/binary"
-	"encoding/json"
 	"fmt"
 	"log"
 	"net"
@@ -12,9 +10,7 @@ import (
 	"time"
 
 	"github.com/KD0S-02/KDTransfer/internal/crypto"
-	"github.com/KD0S-02/KDTransfer/internal/network"
 	"github.com/KD0S-02/KDTransfer/internal/protocol"
-	"github.com/KD0S-02/KDTransfer/internal/signallingserver"
 )
 
 func (c *Client) Receiver(passphrase string) error {
@@ -26,55 +22,6 @@ func (c *Client) Receiver(passphrase string) error {
 	}
 
 	defer listener.Close()
-
-	localAddrs, err := network.LocalAddresses(c.Config.TCPPort)
-
-	if err != nil {
-		return fmt.Errorf("error while reading network address: %s",
-			err.Error())
-	}
-
-	peerInfo := signallingserver.PeerInfo{
-		LocalAddr: localAddrs,
-		Type:      signallingserver.PeerTypeNative,
-	}
-
-	if len(passphrase) != 0 {
-		saltData := crypto.GenerateRandSalt()
-		c.Key, err = crypto.GenerateKey(passphrase, saltData)
-		if err != nil {
-			return fmt.Errorf("error while generating key: %s",
-				err.Error())
-		}
-		for i, addr := range localAddrs {
-			data, err := crypto.EncrpyptData([]byte(addr), c.Key)
-			if err != nil {
-				return fmt.Errorf("error while encrypting addrs: %s",
-					err.Error())
-			}
-			localAddrs[i] = base64.StdEncoding.EncodeToString(data)
-		}
-		peerInfo.SaltData = saltData
-	}
-
-	payload, err := json.Marshal(peerInfo)
-
-	if err != nil {
-		return fmt.Errorf("error while encoding peer info as json: %v",
-			err)
-	}
-
-	request := protocol.MakeMessage(protocol.SERVER_HELLO, []byte(payload))
-	if _, err := c.SignalConn.Write(request); err != nil {
-		return fmt.Errorf("failed to send port to server: %w", err)
-	}
-
-	_, payload, err = protocol.ReadMessage(c.SignalConn)
-	if err != nil {
-		return fmt.Errorf("failed to read server response: %w", err)
-	}
-
-	log.Println("Current ID:", string(payload))
 
 	go func() {
 		for {
@@ -125,16 +72,16 @@ func (c *Client) handleDecrpyption(data []byte) ([]byte, error) {
 
 func handleMessages(peerConn net.Conn, c *Client) (close bool, err error) {
 
-	opCode, payload, err := protocol.ReadMessage(peerConn)
-
+	buf := make([]byte, protocol.TotalTCPSize)
+	opCode, n, err := protocol.ReadMessage(peerConn, buf)
 	if err != nil {
 		return true, err
 	}
 
 	switch opCode {
 
-	case protocol.FILE_TRANSFER_START:
-		payload, err = c.handleDecrpyption(payload)
+	case protocol.FileTransferStart:
+		payload, err := c.handleDecrpyption(buf[:n])
 		if err != nil {
 			return true, fmt.Errorf("error while decrypting transfer start payload: %s",
 				err.Error())
@@ -160,9 +107,9 @@ func handleMessages(peerConn net.Conn, c *Client) (close bool, err error) {
 		ft.File = file
 		c.AddTransfer(transferID, ft)
 
-	case protocol.FILE_TRANSFER_DATA:
+	case protocol.FileTransferData:
 		transferID, _, chunkData := protocol.
-			ParseFileTransferDataPayload(payload)
+			ParseFileTransferDataPayload(buf[:n])
 
 		if len(c.Key) != 0 {
 			chunkData, err = crypto.DecryptData(chunkData, c.Key)
@@ -188,8 +135,8 @@ func handleMessages(peerConn net.Conn, c *Client) (close bool, err error) {
 			return true, err
 		}
 
-	case protocol.FILE_TRANSFER_END:
-		payload, err = c.handleDecrpyption(payload)
+	case protocol.FileTransferEnd:
+		payload, err := c.handleDecrpyption(buf[:n])
 		if err != nil {
 			return true, fmt.Errorf("error while decrypting transfer start payload: %s",
 				err.Error())

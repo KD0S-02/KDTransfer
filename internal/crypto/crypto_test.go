@@ -17,7 +17,7 @@ func TestCrypto(t *testing.T) {
 		}
 
 		plaintext := []byte(d)
-		ciphertext, err := EncrpyptData(plaintext, key)
+		ciphertext, err := EncryptData(plaintext, key)
 		if err != nil {
 			t.Errorf("Error during encryption: %s", err.Error())
 		}
@@ -64,7 +64,7 @@ func TestWrongPassphraseFailsDecryption(t *testing.T) {
 
 	// Encrypt with correct passphrase
 	key1, _ := GenerateKey("correct_password", saltData)
-	ciphertext, _ := EncrpyptData([]byte(data), key1)
+	ciphertext, _ := EncryptData([]byte(data), key1)
 
 	// Try to decrypt with wrong passphrase
 	key2, _ := GenerateKey("wrong_password", saltData)
@@ -82,7 +82,7 @@ func TestEmptyData(t *testing.T) {
 	key, _ := GenerateKey(passphrase, saltData)
 
 	// Test empty data
-	ciphertext, err := EncrpyptData([]byte(""), key)
+	ciphertext, err := EncryptData([]byte(""), key)
 	if err != nil {
 		t.Error("Should handle empty data:", err)
 	}
@@ -109,7 +109,7 @@ func TestLargeData(t *testing.T) {
 
 	key, _ := GenerateKey(passphrase, saltData)
 
-	ciphertext, err := EncrpyptData(largeData, key)
+	ciphertext, err := EncryptData(largeData, key)
 	if err != nil {
 		t.Error("Should handle large data:", err)
 	}
