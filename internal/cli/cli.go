@@ -54,6 +54,8 @@ func (c *CLI) Run() error {
 		return err
 	}
 
+	defer client.SignalConn.Close()
+
 	switch c.Command {
 	case "send":
 		if c.File == "" || c.Peer == "" {
@@ -65,4 +67,5 @@ func (c *CLI) Run() error {
 	default:
 		return fmt.Errorf("unknown command: %s", c.Command)
 	}
+
 }

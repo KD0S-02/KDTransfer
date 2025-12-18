@@ -27,7 +27,7 @@ func (c *Client) Receiver(passphrase string) error {
 
 	defer listener.Close()
 
-	localAddrs, err := network.GetAllLocalAddresses(c.Config.TCPPort)
+	localAddrs, err := network.LocalAddresses(c.Config.TCPPort)
 
 	if err != nil {
 		return fmt.Errorf("error while reading network address: %s",
@@ -77,8 +77,12 @@ func (c *Client) Receiver(passphrase string) error {
 	log.Println("Current ID:", string(payload))
 
 	go func() {
-		if err := listenForDirectConnections(listener, c); err != nil {
-			log.Printf("error in peer listener: %v", err)
+		for {
+			peerConn, err := listener.Accept()
+			if err != nil {
+				fmt.Printf("failed to accept connection: %v", err)
+			}
+			go handlePeerConnection(peerConn, c)
 		}
 	}()
 
@@ -94,16 +98,6 @@ func waitForUserInput() error {
 		}
 	}
 	return scanner.Err()
-}
-
-func listenForDirectConnections(listener net.Listener, c *Client) error {
-	for {
-		peerConn, err := listener.Accept()
-		if err != nil {
-			return fmt.Errorf("failed to accept connection: %w", err)
-		}
-		go handlePeerConnection(peerConn, c)
-	}
 }
 
 func handlePeerConnection(conn net.Conn, c *Client) error {
@@ -178,7 +172,7 @@ func handleMessages(peerConn net.Conn, c *Client) (close bool, err error) {
 			}
 		}
 
-		ft, ok := c.GetTransfer(transferID)
+		ft, ok := c.Transfer(transferID)
 		if !ok {
 			return true, fmt.Errorf("chunk received for invalid transfer id: %d",
 				transferID)
@@ -202,7 +196,7 @@ func handleMessages(peerConn net.Conn, c *Client) (close bool, err error) {
 		}
 
 		transferID := binary.BigEndian.Uint32(payload)
-		ft, ok := c.GetTransfer(transferID)
+		ft, ok := c.Transfer(transferID)
 
 		if !ok {
 			return true, fmt.Errorf("invalid ID for FILE_TRANSFER_END message")

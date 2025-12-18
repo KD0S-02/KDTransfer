@@ -79,7 +79,7 @@ func (c *Client) sendFile(transferID uint32, filepath string,
 func (c *Client) HandleSendCommand(peer string, filepath string,
 	passphrase string) error {
 
-	localAddrs, err := network.GetAllLocalAddresses(c.Config.TCPPort)
+	localAddrs, err := network.LocalAddresses(c.Config.TCPPort)
 	if err != nil {
 		return err
 	}

@@ -12,21 +12,7 @@ import (
 	"github.com/KD0S-02/KDTransfer/internal/protocol"
 )
 
-func (ss *SignallingServer) startWriter(conn net.Conn, peer Peer) {
-	go func() {
-		for msg := range peer.Outgoing {
-			_, err := conn.Write(msg)
-			if err != nil {
-				log.Println("Error writing to connection:", err)
-				conn.Close()
-				ss.RemoveUser(peer.ID)
-				break
-			}
-		}
-	}()
-}
-
-func (ss *SignallingServer) handleRegister(conn net.Conn, payload []byte) {
+func (ss *SignallingServer) handleRegister(conn net.Conn, payload []byte) string {
 	id := crypto.GenerateID()
 
 	var peerInfo PeerInfo
@@ -45,12 +31,21 @@ func (ss *SignallingServer) handleRegister(conn net.Conn, payload []byte) {
 	}
 
 	ss.AddUser(id, user)
-	ss.startWriter(conn, user)
+
+	go func() {
+		defer conn.Close() // Ensure connection closes if writer fails
+		for msg := range user.Outgoing {
+			if _, err := conn.Write(msg); err != nil {
+				return
+			}
+		}
+	}()
 
 	response := protocol.MakeMessage(protocol.SERVER_ACK, []byte(id))
 	user.Outgoing <- response
 
 	log.Printf("New connection established with ID: %s", id)
+	return id
 }
 
 func (ss *SignallingServer) handlePeerLookup(conn net.Conn, payload []byte) {
@@ -121,34 +116,38 @@ func (ss *SignallingServer) forwardUserInfo(peer Peer, userInfo PeerInfo) error 
 	}
 }
 
-func (ss *SignallingServer) HandleConnection(conn net.Conn) {
-	defer conn.Close()
+func (ss *SignallingServer) HandleConnection(conn net.Conn) error {
+
+	var id string
+
+	defer func() {
+		conn.Close()
+		if id != "" {
+			ss.RemoveUser(id)
+		}
+	}()
 
 	for {
 
 		opCode, payload, err := protocol.ReadMessage(conn)
 
 		if err != nil {
-
 			if err == io.EOF {
-				log.Println("Connection closed by client")
-				return
+				return fmt.Errorf("connection closed by peer: %w", err)
 			}
-
-			log.Println("Error reading message:", err)
-			return
+			return fmt.Errorf("error reading message: %w", err)
 		}
 
 		switch opCode {
-
 		case protocol.SERVER_HELLO:
-			ss.handleRegister(conn, payload)
+			id = ss.handleRegister(conn, payload)
 
 		case protocol.PEER_INFO_LOOKUP:
 			ss.handlePeerLookup(conn, payload)
 
 		default:
-			log.Println("Unknown operation code:", opCode)
+			return fmt.Errorf("unknown operation code: %d", opCode)
 		}
+
 	}
 }

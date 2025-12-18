@@ -2,10 +2,12 @@ package protocol
 
 import (
 	"encoding/binary"
+	"fmt"
 	"io"
 	"net"
 )
 
+// message op codes
 const (
 	SERVER_HELLO        byte = 0x01
 	SERVER_ACK          byte = 0x02
@@ -17,10 +19,12 @@ const (
 	FILE_TRANSFER_DATA  byte = 0x08
 	FILE_TRANSFER_END   byte = 0x09
 	PEER_INFO_FORWARD   byte = 0x0A
+	HEARTBEAT           byte = 0x0B
+	HEARTBEAT_ACK       byte = 0x0C
 )
 
-const TCP_CHUNK_SIZE = 512 * 1024   // 256KB
-const WEBRTC_CHUNK_SIZE = 16 * 1024 // 16KB
+const TOTAL_TCP_SIZE = 256 * 1024   // 256KB
+const TOTAL_WEBRTC_SIZE = 16 * 1024 // 16KB
 
 type Message struct {
 	OpCode     byte
@@ -28,46 +32,51 @@ type Message struct {
 	Payload    []byte
 }
 
-type TransferPayload struct {
-	TranferID   [4]byte
-	FilenameLen [2]byte
-	Filename    []byte
-	Filesize    [8]byte
-	NChunks     [4]byte
+func PingMessage(buf []byte) (int, error) {
+	return MakeMessage(HEARTBEAT, nil, buf)
 }
 
-func ReadMessage(conn net.Conn) (opCode byte, payload []byte, err error) {
+func PongMessage(buf []byte) (int, error) {
+	return MakeMessage(HEARTBEAT_ACK, nil, buf)
+}
 
+func ReadMessage(conn net.Conn, buf []byte) (opCode byte, n int, err error) {
 	header := make([]byte, 5)
 	_, err = io.ReadFull(conn, header)
 	if err != nil {
-		return ERROR, nil, err
+		return ERROR, 0, err
 	}
 
-	command := header[0]
-	payloadLength := int(binary.BigEndian.Uint32(header[1:5]))
+	opCode = header[0]
+	payloadLen := int(binary.BigEndian.Uint32(header[1:5]))
 
-	payload = make([]byte, payloadLength)
-
-	_, err = io.ReadFull(conn, payload)
-	if err != nil {
-		return 0, nil, err
+	if payloadLen > len(buf) {
+		return opCode, 0, fmt.Errorf("payload %d exceeds buffer %d", payloadLen, len(buf))
 	}
 
-	return command, payload, nil
+	if payloadLen > 0 {
+		_, err = io.ReadFull(conn, buf[:payloadLen])
+		if err != nil {
+			return opCode, 0, err
+		}
+	}
 
+	return opCode, payloadLen, nil
 }
 
-// Constructs a response message with the given operation code and payload.
-func MakeMessage(opCode byte, payload []byte) []byte {
+func MakeMessage(opCode byte, payload []byte, buf []byte) (int, error) {
 	payloadLength := len(payload)
+	totalSize := 5 + payloadLength
 
-	response := make([]byte, 5+payloadLength)
-	response[0] = opCode
-	binary.BigEndian.PutUint32(response[1:5], uint32(payloadLength))
-	copy(response[5:], payload)
+	if len(buf) < totalSize {
+		return 0, fmt.Errorf("buffer too small: need %d bytes have %d", totalSize, len(buf))
+	}
 
-	return response
+	buf[0] = opCode
+	binary.BigEndian.PutUint32(buf[1:5], uint32(payloadLength))
+	copy(buf[5:], payload)
+
+	return totalSize, nil
 }
 
 func ParseFileTransferPayload(payload []byte) (transferID uint32,
@@ -130,30 +139,47 @@ func ParseFileTransferDataPayload(payload []byte) (transferID uint32,
 }
 
 func CreateFileTransferStartPayload(transferID uint32,
-	fileName string, fileSize uint64, nChunks uint32) []byte {
+	fileName string, fileSize uint64, nChunks uint32, buf []byte) (int, error) {
 	fileNameBytes := []byte(fileName)
 	fileNameLength := len(fileNameBytes)
 
-	payload := make([]byte, 6+fileNameLength+8+4)
-	binary.BigEndian.PutUint32(payload[:4], transferID)
-	binary.BigEndian.PutUint16(payload[4:6], uint16(fileNameLength))
-	copy(payload[6:6+fileNameLength], fileNameBytes)
-	binary.BigEndian.PutUint64(
-		payload[6+fileNameLength:6+fileNameLength+8], fileSize)
-	binary.BigEndian.PutUint32(payload[6+fileNameLength+8:], nChunks)
+	// File transfer payload format:
+	// [transferID (4 bytes)][fileNameLength (2 bytes)]
+	// [fileName (variable length)]
+	// [fileSize (8 bytes)][nChunks (4 bytes)]
+	totalSize := 6 + fileNameLength + 8 + 4
 
-	return payload
+	if len(buf) < totalSize {
+		return 0, fmt.Errorf("buffer too small for file transfer start payload")
+	}
+
+	binary.BigEndian.PutUint32(buf[:4], transferID)
+	binary.BigEndian.PutUint16(buf[4:6], uint16(fileNameLength))
+
+	copy(buf[6:6+fileNameLength], fileNameBytes)
+
+	fileSizeOffset := 6 + fileNameLength
+	nChunksOffset := fileSizeOffset + 8
+
+	binary.BigEndian.PutUint64(buf[fileSizeOffset:nChunksOffset], fileSize)
+	binary.BigEndian.PutUint32(buf[nChunksOffset:totalSize], nChunks)
+
+	return totalSize, nil
 }
 
 func CreateFileTransferDataRequest(transferID uint32, chunkIndex uint32,
-	chunkData []byte) []byte {
+	chunkData []byte, buf []byte) (int, error) {
+	totalSize := 13 + len(chunkData)
 
-	request := make([]byte, 5+8+len(chunkData))
-	request[0] = FILE_TRANSFER_DATA
-	binary.BigEndian.PutUint32(request[1:5], uint32(8+len(chunkData)))
-	binary.BigEndian.PutUint32(request[5:9], transferID)
-	binary.BigEndian.PutUint32(request[9:13], chunkIndex)
-	copy(request[13:], chunkData)
+	if len(buf) < totalSize {
+		return 0, fmt.Errorf("buffer too small for file transfer data payload")
+	}
 
-	return request
+	buf[0] = FILE_TRANSFER_DATA
+	binary.BigEndian.PutUint32(buf[1:5], uint32(8+len(chunkData)))
+	binary.BigEndian.PutUint32(buf[5:9], transferID)
+	binary.BigEndian.PutUint32(buf[9:13], chunkIndex)
+	copy(buf[13:], chunkData)
+
+	return totalSize, nil
 }

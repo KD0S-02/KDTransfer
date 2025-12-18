@@ -20,18 +20,20 @@ type Client struct {
 
 func NewClient() (*Client, error) {
 	cfg := config.LoadConfig()
+
 	conn, err := net.DialTimeout("tcp",
-		cfg.SignallingServerHost+":"+cfg.SignallingServerPort, 10*time.Second)
+		cfg.SignallingServerHost+":"+cfg.SignallingServerPort, 5*time.Second)
 	if err != nil {
 		return nil, err
 	}
+
 	return &Client{
 		SignalConn: conn,
 		Config:     cfg,
 	}, nil
 }
 
-func (c *Client) GetTransfer(transferID uint32) (*FileTransfer, bool) {
+func (c *Client) Transfer(transferID uint32) (*FileTransfer, bool) {
 	value, ok := c.Transfers.Load(transferID)
 
 	if !ok {
@@ -44,7 +46,7 @@ func (c *Client) GetTransfer(transferID uint32) (*FileTransfer, bool) {
 }
 
 func (c *Client) CompleteTransfer(transferID uint32, message string) {
-	ft, ok := c.GetTransfer(transferID)
+	ft, ok := c.Transfer(transferID)
 
 	if !ok {
 		return
