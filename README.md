@@ -1,14 +1,29 @@
 # KDTransfer
 
-A simple p2p file transfer application using Go to get a better understanding of low level network protocols.
+A lightweight, peer-to-peer (P2P) file transfer tool written in Go, designed to explore low-level network communication, custom binary protocols, and concurrent programming.
 
 ## Overview
 
-This protocol facilitates **peer-to-peer client coordination** via a signalling server, using a **custom TCP-based protocol**. Each client connects to the server to:
+KDTransfer is a P2P file sharing tool I’m building to get under the hood of network protocols.
 
-* Register and receive a unique ID
-* Discover and connect to other peers
-* Prepare for direct communication
+Right now, it works on a Local Area Network (LAN) using a Signaling Server I wrote to help peers find each other's addresses, so you don't have to go digging for your local IP every time you want to send a file.
+
+*What I'm working on right now*: I’m currently adding support for QUIC so this works over the internet. This involves figuring out NAT traversal and UDP hole punching, which is a big jump from basic LAN sockets but much more powerful.
+
+
+## Features
+* **Peer Discovery:** Dedicated signaling server for client registration and address lookup.
+* **Custom Binary Protocol:** Hand-rolled framing (Command-Length-Payload) to handle TCP stream fragmentation.
+* **End-to-End Encryption (E2EE):** Optional AES-GCM encryption with keys derived via PBKDF2 from a user-provided passphrase.
+* **Efficient Streaming:** Built on Go's `io` interfaces to stream files directly from disk, ensuring low memory footprints for large transfers.
+* **Connection-Racing & Interface Discovery:** Automatically scans network interfaces and filters out "noise" like Docker or virtual bridges. It retrieves both local and public IPs to "race" TCP and QUIC connections simultaneously, automatically picking the fastest available path.
+
+
+## How the "Connection Race" Works
+Since the app will support both TCP for LAN and QUIC for the internet, it doesn't just guess which one to use. Instead, it initiates a race:
+1. **TCP Attempt:** Aimed at local network speed (LAN).
+2. **QUIC Attempt:** Optimized for punching through firewalls and handling packet loss (Internet).
+3. **The Winner:** Whichever handshake completes first is used for the file transfer. This ensures the best performance whether you are in the same room or across the world. (the quic part is work in progress)
 
 ---
 
@@ -19,18 +34,24 @@ This protocol facilitates **peer-to-peer client coordination** via a signalling 
 git clone https://github.com/KD0S-02/KDTransfer.git
 cd KDTransfer
 
-# Build server
-go build -o kdtransfer-server ./cmd/server
+# Build using Makefile
+make build
 
-# Build client  
-go build -o kdtransfer-client ./cmd/client
+# Or manually
+go build -o kdtransfer-server ./cmd/server  
+go build -o kdtransfer ./cmd/client
 
 # Run server
 ./kdtransfer-server
 
 # Run client (in another terminal)
-./kdtransfer-client recv  # For receiving files
-./kdtransfer-client send --file <filepath> --peer <peerID>  # For sending files
+./kdtransfer recv  # For receiving files
+./kdtransfer send --file <filepath> --peer <peerID> # For sending files
+
+./kdtransfer recv --passphrase <passphrase> # For receiving files and for E2EE (can set custom passphrase)
+./kdtransfer send --file <filepath> --peer <peerID> --passphrase <passphrase>
+
+
 ```
 
 
@@ -51,22 +72,10 @@ Each message follows the format:
 * Payload Length: 32-bit big-endian unsigned integer
 * Payload is command-specific
 
----
-
-## Commands
-
-| Command Name           | Code  | Direction         | Purpose                              |
-|------------------------|-------|-------------------|--------------------------------------|
-| `SERVER_HELLO`         | 0x01  | Client → Server   | Register and request ID              |
-| `SERVER_ACK`           | 0x02  | Server → Client   | Send client ID back                  |
-| `PEER_INFO_LOOKUP`     | 0x03  | Server → Client   | Request peer’s IP:Port by ID         |
-| `PEER_LOOKUP_ACK`      | 0x04  | Server → Client   | Return peer’s IP:Port by ID          |
-| `PEER_INFO_FORWARD`    | 0x05  | Server → Client   | Forward peer info to another client  |
-| `ERROR`                | 0x06  | Server → Client   | Report protocol or logic error       |
-| `BYE`                  | 0x07  | Client → Server   | Graceful disconnect                  |
-| `FILE_TRANSFER_START`  | 0x08  | Peer ↔ Peer       | Initiate file transfer               |
-| `FILE_TRANSFER_DATA`   | 0x09  | Peer ↔ Peer       | Send file data chunk                 |
-| `FILE_TRANSFER_END`    | 0x0A  | Peer ↔ Peer       | End file transfer                    |
+| Offset | Field          | Type    | Description                               |
+|--------|----------------|---------|-------------------------------------------|
+| 0      | Command        | 1 Byte  | Action ID (e.g., Register, Connect, Data) |
+| 1-4    | Payload Length | 4 Bytes | 32-bit Big-Endian unsigned integer        |
+| 5+     | Payload        | []byte  | Command-specific data or file chunks      |
 
 ---
-

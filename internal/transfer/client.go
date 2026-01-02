@@ -45,10 +45,15 @@ func (c *Client) RegisterWithServer(passphrase string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("failed to get local addresses: %w", err)
 	}
+	publicAddr, err := network.PublicAddr()
+	if err != nil {
+		return "", fmt.Errorf("failed to get public IP: %w", err)
+	}
 
 	peerInfo := signallingserver.PeerInfo{
-		LocalAddr: localAddrs,
-		Type:      signallingserver.PeerTypeNative,
+		LocalAddr:  localAddrs,
+		PublicAddr: publicAddr,
+		Type:       signallingserver.PeerTypeNative,
 	}
 
 	if len(passphrase) != 0 {

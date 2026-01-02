@@ -63,6 +63,7 @@ func (c *Client) HandleSendCommand(peer string, filepath string, passphrase stri
 
 	return c.transferFile(filepath, peerConn)
 }
+
 func (c *Client) lookupPeer(peerID string) (signallingserver.PeerInfo, error) {
 	lookupRequest := signallingserver.PeerLookUp{PeerID: peerID}
 	payload, err := json.Marshal(lookupRequest)

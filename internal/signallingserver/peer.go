@@ -9,7 +9,7 @@ type PeerInfo struct {
 	SaltData   string
 	Type       PeerType
 	LocalAddr  []string
-	PublicAddr []string
+	PublicAddr string
 }
 
 type Peer struct {

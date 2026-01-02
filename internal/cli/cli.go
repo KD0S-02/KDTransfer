@@ -54,6 +54,10 @@ func (c *CLI) Run() error {
 		return err
 	}
 
+	if c.Passphrase != "" {
+		fmt.Println("---Using provided passphrase for E2EE---")
+	}
+
 	peerID, err := client.RegisterWithServer(c.Passphrase)
 	if err != nil {
 		return err

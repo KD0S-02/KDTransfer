@@ -3,8 +3,11 @@ package network
 import (
 	"fmt"
 	"net"
+	"strconv"
 	"strings"
 	"time"
+
+	"github.com/pion/stun"
 )
 
 type ConnType string
@@ -15,6 +18,37 @@ const (
 	dialTimeout          = 2 * time.Second
 	raceTimeout          = 3 * time.Second
 )
+
+func PublicAddr() (string, error) {
+	u, err := stun.ParseURI("stun:stun.l.google.com:19302")
+	if err != nil {
+		return "", err
+	}
+
+	c, err := stun.DialURI(u, &stun.DialConfig{})
+	if err != nil {
+		return "", err
+	}
+
+	message := stun.MustBuild(stun.TransactionID, stun.BindingRequest)
+	ip := ""
+	if err := c.Do(message, func(res stun.Event) {
+		if res.Error != nil {
+			panic(res.Error)
+		}
+
+		var xorAddr stun.XORMappedAddress
+		if err := xorAddr.GetFrom(res.Message); err != nil {
+			panic(err)
+		}
+		ip = net.JoinHostPort(xorAddr.IP.String(), strconv.Itoa(xorAddr.Port))
+
+	}); err != nil {
+		return ip, err
+	}
+
+	return ip, nil
+}
 
 func RaceConnections(localAddrs []string) (peerConn net.Conn, connType ConnType, err error) {
 
